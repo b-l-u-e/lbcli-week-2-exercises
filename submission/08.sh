@@ -55,4 +55,4 @@ outputs=$(jq -n --arg payAddr "$PAYMENT_ADDRESS" --argjson payAmt $PAYMENT_AMOUN
 
 raw_tx_new=$(bitcoin-cli -regtest createrawtransaction "$inputs" "$outputs")
 # echo "Created RBF-enabled raw transaction:"
-echo "$raw_tx_new"
+echo $raw_tx_new

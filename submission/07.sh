@@ -46,4 +46,4 @@ outputs=$(jq -n --arg payAddr "$PAYMENT_ADDRESS" --argjson payAmt $PAYMENT_AMOUN
 new_raw_tx=$(bitcoin-cli -regtest -rpcwallet=btrustwallet createrawtransaction "$inputs" "$outputs")
 
 # echo "Raw transaction hex:"
-echo "$new_raw_tx"
+echo $new_raw_tx
