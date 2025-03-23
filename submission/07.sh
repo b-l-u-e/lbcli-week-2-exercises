@@ -33,14 +33,13 @@ CHANGE_ADDRESS=$(bitcoin-cli -regtest -rpcwallet=btrustwallet getrawchangeaddres
 
 # Create the input JSON: use both UTXOs from the provided transaction.
 inputs=$(jq -n --arg txid "$txid" '[
-  {txid: $txid, vout: 0},
-  {txid: $txid, vout: 1}
+  {txid: $txid, vout: 0, sequence: 4294967293},
+  {txid: $txid, vout: 1, sequence: 4294967293}
 ]')
 
-# Create the output JSON: payment to the destination and change back.
-outputs=$(jq -n --arg payAddr "$PAYMENT_ADDRESS" --argjson payAmt $PAYMENT_AMOUNT \
-                --arg changeAddr "$CHANGE_ADDRESS" --argjson changeAmt $CHANGE_AMOUNT \
-                '{($payAddr): $payAmt, ($changeAddr): $changeAmt}')
+# Create the output JSON: payment to the destination.
+outputs=$(jq -n --arg addr "$PAYMENT_ADDRESS" --argjson amt $(( PAYMENT_AMOUNT - FEE )) '{($addr): $amt}')
+
 
 # Create the raw transaction.
 new_raw_tx=$(bitcoin-cli -regtest -rpcwallet=btrustwallet createrawtransaction "$inputs" "$outputs")
