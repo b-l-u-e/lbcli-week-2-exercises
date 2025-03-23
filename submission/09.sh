@@ -67,8 +67,7 @@ echo "Number of outputs: $NUM_OUTPUTS"
 
 # STUDENT TASK: Extract the value of the first output in satoshis
 # WRITE YOUR SOLUTION BELOW:
-FIRST_OUTPUT_BTC=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$BASE_TX" | jq -r '.vout[0].value')
-FIRST_OUTPUT_VALUE=$(echo "scale=0; $FIRST_OUTPUT_BTC * 100000000 / 1" | bc)
+FIRST_OUTPUT_VALUE=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$BASE_TX" | jq -r '.vout[0].value * 100000000 | floor')
 check_cmd "Output value extraction" "FIRST_OUTPUT_VALUE" "$FIRST_OUTPUT_VALUE"
 
 echo "First output value: $FIRST_OUTPUT_VALUE satoshis"
@@ -92,8 +91,8 @@ UTXO_TXID=$TXID
 UTXO_VOUT_INDEX=0
 check_cmd "UTXO vout selection" "UTXO_VOUT_INDEX" "$UTXO_VOUT_INDEX"
 
-UTXO_BTC=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$BASE_TX" | jq -r '.vout[0].value')
-UTXO_VALUE=$(echo "scale=0; $UTXO_BTC * 100000000 / 1" | bc)
+
+UTXO_VALUE=$FIRST_OUTPUT_VALUE
 check_cmd "UTXO value extraction" "UTXO_VALUE" "$UTXO_VALUE"
 
 echo "Selected UTXO:"
@@ -132,11 +131,11 @@ echo ""
 
 # STUDENT TASK: Calculate the approximate transaction size and fee
 # WRITE YOUR SOLUTION BELOW:
-TX_SIZE=140
+TX_SIZE=$((10 + 68 + 31 + 31))
 check_cmd "Transaction size calculation" "TX_SIZE" "$TX_SIZE"
 
-FEE_RATE=10  # satoshis/vbyte
-FEE_SATS=$(( TX_SIZE * FEE_RATE ))
+
+FEE_SATS=$((TX_SIZE * 10))
 check_cmd "Fee calculation" "FEE_SATS" "$FEE_SATS"
 
 echo "Estimated transaction size: $TX_SIZE vbytes"
@@ -170,8 +169,7 @@ PAYMENT_ADDRESS="2MvLcssW49n9atmksjwg2ZCMsEMsoj3pzUP"
 CHANGE_ADDRESS="bcrt1qg09ftw43jvlhj4wlwwhkxccjzmda3kdm4y83ht"
 
 # STUDENT TASK: Create a proper input JSON for createrawtransaction
-TX_INPUTS=$(jq -n --arg txid "$UTXO_TXID" --argjson vout $UTXO_VOUT_INDEX \
-  '[{txid: $txid, vout: $vout, sequence: 4294967293}]')
+TX_INPUTS=$(jq -n --arg txid "$UTXO_TXID" --argjson vout $UTXO_VOUT_INDEX '[{"txid": $txid, "vout": $vout, "sequence": 4294967293}]')
 check_cmd "Input JSON creation" "TX_INPUTS" "$TX_INPUTS"
 
 # Verify RBF is enabled in the input structure
@@ -182,18 +180,21 @@ else
 fi
 
 # STUDENT TASK: Calculate the change amount
-PAYMENT_AMOUNT=15000000  # in satoshis
+PAYMENT_AMOUNT=15000000  
 CHANGE_AMOUNT=$(( UTXO_VALUE - PAYMENT_AMOUNT - FEE_SATS ))
 check_cmd "Change calculation" "CHANGE_AMOUNT" "$CHANGE_AMOUNT"
 
 # Convert amounts to BTC for createrawtransaction
 PAYMENT_BTC=$(echo "scale=8; $PAYMENT_AMOUNT / 100000000" | bc)
+PAYMENT_BTC=$(printf "%.8f" "$PAYMENT_BTC")
+
 CHANGE_BTC=$(echo "scale=8; $CHANGE_AMOUNT / 100000000" | bc)
+CHANGE_BTC=$(printf "%.8f" "$CHANGE_BTC")
 
 # STUDENT TASK: Create the outputs JSON structure
-TX_OUTPUTS=$(jq -n --arg payAddr "2MvLcssW49n9atmksjwg2ZCMsEMsoj3pzUP" --argjson payAmt $PAYMENT_AMOUNT \
-  --arg changeAddr "bcrt1qg09ftw43jvlhj4wlwwhkxccjzmda3kdm4y83ht" --argjson chAmt $CHANGE_AMOUNT \
-  '{($payAddr): ($payAmt|tonumber), ($changeAddr): ($chAmt|tonumber)}')
+TX_OUTPUTS=$(jq -n --arg pay "$PAYMENT_ADDRESS" --argjson amt "$PAYMENT_BTC" \
+  --arg change "$CHANGE_ADDRESS" --argjson change_amt "$CHANGE_BTC" \
+  '{($pay): ($amt|tonumber), ($change): ($change_amt|tonumber)}')
 check_cmd "Output JSON creation" "TX_OUTPUTS" "$TX_OUTPUTS"
 
 # STUDENT TASK: Create the raw transaction
@@ -229,10 +230,12 @@ else
 fi
 check_cmd "RBF verification" "VERIFY_RBF" "$VERIFY_RBF"
 
-VERIFY_PAYMENT=$(echo "$DECODED_TX" | jq -r --arg addr "2MvLcssW49n9atmksjwg2ZCMsEMsoj3pzUP" '.vout[] | select(.scriptPubKey.addresses[0]==$addr) | .value')
+VERIFY_PAYMENT=$(echo "$DECODED_TX" | jq -r --arg addr "$PAYMENT_ADDRESS" '.vout[] | select(.scriptPubKey.address == $addr) | .value')
+VERIFY_PAYMENT=$(printf "%.8f" "$VERIFY_PAYMENT")
 check_cmd "Payment verification" "VERIFY_PAYMENT" "$VERIFY_PAYMENT"
 
-VERIFY_CHANGE=$(echo "$DECODED_TX" | jq -r --arg addr "bcrt1qg09ftw43jvlhj4wlwwhkxccjzmda3kdm4y83ht" '.vout[] | select(.scriptPubKey.addresses[0]==$addr) | .value')
+VERIFY_CHANGE=$(echo "$DECODED_TX" | jq -r --arg addr "$CHANGE_ADDRESS" '.vout[] | select(.scriptPubKey.address == $addr) | .value')
+VERIFY_CHANGE=$(printf "%.8f" "$VERIFY_CHANGE")
 check_cmd "Change verification" "VERIFY_CHANGE" "$VERIFY_CHANGE"
 
 echo "Verification Results:"
@@ -264,11 +267,9 @@ echo ""
 echo "Creating a simple transaction for signing..."
 
 # STUDENT TASK: Create a simple transaction that sends funds to the test address
-SIMPLE_TX_INPUTS='[{"txid":"'$TXID'","vout":0,"sequence":4294967293}]'
-SIMPLE_TX_OUTPUTS='{"'$TEST_ADDRESS'":0.0001}'
 
 # Create a raw transaction for signing using the SIMPLE_TX_INPUTS and SIMPLE_TX_OUTPUTS
-SIMPLE_RAW_TX=$(bitcoin-cli -regtest -rpcwallet=btrustwallet createrawtransaction "$SIMPLE_TX_INPUTS" "$SIMPLE_TX_OUTPUTS")
+SIMPLE_RAW_TX=$(bitcoin-cli -regtest -rpcwallet=btrustwallet createrawtransaction "$TX_INPUTS" '{"'$TEST_ADDRESS'":0.0001}')
 check_cmd "Simple transaction creation" "SIMPLE_RAW_TX" "$SIMPLE_RAW_TX"
 
 echo "Simple transaction created: ${SIMPLE_RAW_TX:0:64}... (truncated)"
@@ -304,21 +305,23 @@ echo "Parent transaction ID: $PARENT_TXID"
 
 # STUDENT TASK: Identify the change output index from the parent transaction
 # WRITE YOUR SOLUTION BELOW:
-CHANGE_OUTPUT_INDEX=$(echo "$DECODED_TX" | jq -r --arg ca "bcrt1qg09ftw43jvlhj4wlwwhkxccjzmda3kdm4y83ht" '.vout | to_entries | map(select(.value.scriptPubKey.addresses[0]==$ca)) | .[0].key')
+CHANGE_OUTPUT_INDEX=$(echo "$DECODED_TX" | jq -r --arg addr "$CHANGE_ADDRESS" \
+  '.vout | to_entries | map(select(.value.scriptPubKey.address == $addr)) | .[0].key')
 check_cmd "Change output identification" "CHANGE_OUTPUT_INDEX" "$CHANGE_OUTPUT_INDEX"
 
 # STUDENT TASK: Create the input JSON structure for the child transaction
 # WRITE YOUR SOLUTION BELOW:
-CHILD_INPUTS=$(jq -n --arg ptxid "$PARENT_TXID" --argjson vout "$CHANGE_OUTPUT_INDEX" \
-  '[{txid: $ptxid, vout: $vout}]')
+CHILD_INPUTS=$(jq -n --arg txid "$PARENT_TXID" --argjson vout "$CHANGE_OUTPUT_INDEX" \
+  '[{txid: $txid, vout: $vout}]')
+
 check_cmd "Child input creation" "CHILD_INPUTS" "$CHILD_INPUTS"
 
 # STUDENT TASK: Calculate fees, allowing for a high fee to help the parent transaction
 CHILD_TX_SIZE=120
 check_cmd "Child transaction size calculation" "CHILD_TX_SIZE" "$CHILD_TX_SIZE"
 
-CHILD_FEE_RATE=20 # satoshis/vbyte
-CHILD_FEE_SATS=$(( CHILD_TX_SIZE * 20 ))
+ 
+CHILD_FEE_SATS=$((CHILD_TX_SIZE * CHILD_FEE_RATE))
 check_cmd "Child fee calculation" "CHILD_FEE_SATS" "$CHILD_FEE_SATS"
 
 # Calculate the amount to send after deducting fee
@@ -330,8 +333,7 @@ check_cmd "Child amount calculation" "CHILD_SEND_AMOUNT" "$CHILD_SEND_AMOUNT"
 CHILD_SEND_BTC=$(echo "scale=8; $CHILD_SEND_AMOUNT / 100000000" | bc)
 
 # STUDENT TASK: Create the outputs JSON structure
-CHILD_OUTPUTS=$(jq -n --arg cr "$CHILD_RECIPIENT" --argjson amt "$CHILD_SEND_AMOUNT" \
-  '{($cr): ($amt|tonumber)}')
+CHILD_OUTPUTS=$(jq -n --arg addr "$CHILD_RECIPIENT" --argjson amt "$CHILD_SEND_BTC" '{($addr): ($amt|tonumber)}')
 check_cmd "Child output creation" "CHILD_OUTPUTS" "$CHILD_OUTPUTS"
 
 # STUDENT TASK: Create the raw child transaction
@@ -357,15 +359,14 @@ echo "- Sends funds to: bcrt1qxhy8dnae50nwkg6xfmjtedgs6augk5edj2tm3e"
 echo ""
 
 # Decode the secondary transaction (SECONDARY_TX) to get its TXID
-SECONDARY_DECODED=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$SECONDARY_TX")
-SECONDARY_TXID=$(echo "$SECONDARY_DECODED" | jq -r '.txid')
+
+SECONDARY_TXID=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$SECONDARY_TX" | jq -r '.txid')
 check_cmd "Secondary TXID extraction" "SECONDARY_TXID" "$SECONDARY_TXID"
 echo "Secondary transaction ID: $SECONDARY_TXID"
 
 # STUDENT TASK: Create the input JSON structure with a 10-block relative timelock
 # WRITE YOUR SOLUTION BELOW:
-TIMELOCK_INPUTS=$(jq -n --arg txid "$SECONDARY_TXID" --argjson vout 0 \
-  '[{txid: $txid, vout: $vout, sequence: 10}]')
+TIMELOCK_INPUTS=$(jq -n --arg txid "$SECONDARY_TXID" '[{"txid": $txid, "vout": 0, "sequence": 10}]')
 check_cmd "Timelock input creation" "TIMELOCK_INPUTS" "$TIMELOCK_INPUTS"
 
 # Recipient address for timelock funds
@@ -373,21 +374,19 @@ TIMELOCK_ADDRESS="bcrt1qxhy8dnae50nwkg6xfmjtedgs6augk5edj2tm3e"
 
 # STUDENT TASK: Calculate the amount to send (use the output value from SECONDARY_TX, minus a fee)
 # Hint: Extract the output value from the secondary TX first
-SECONDARY_OUTPUT_BTC=$(echo "$SECONDARY_DECODED" | jq -r '.vout[0].value')
-SECONDARY_OUTPUT_VALUE=$(echo "scale=0; $SECONDARY_OUTPUT_BTC * 100000000 / 1" | bc)
+
+SECONDARY_OUTPUT_VALUE=$(bitcoin-cli -regtest -rpcwallet=btrustwallet decoderawtransaction "$SECONDARY_TX" | jq -r '.vout[0].value * 100000000 | floor')
 check_cmd "Secondary output value extraction" "SECONDARY_OUTPUT_VALUE" "$SECONDARY_OUTPUT_VALUE"
 
-TIMELOCK_FEE=1000 # Use a simple fee of 1000 satoshis for this exercise
-TIMELOCK_AMOUNT=$(( SECONDARY_OUTPUT_VALUE - TIMELOCK_FEE ))
+
+TIMELOCK_AMOUNT=$((SECONDARY_OUTPUT_VALUE - TIMELOCK_FEE))
 check_cmd "Timelock amount calculation" "TIMELOCK_AMOUNT" "$TIMELOCK_AMOUNT"
 
 # Convert to BTC
 TIMELOCK_BTC=$(echo "scale=8; $TIMELOCK_AMOUNT / 100000000" | bc)
 
 # STUDENT TASK: Create the outputs JSON structure
-TIMELOCK_ADDRESS="bcrt1qxhy8dnae50nwkg6xfmjtedgs6augk5edj2tm3e"
-TIMELOCK_OUTPUTS=$(jq -n --arg ta "$TIMELOCK_ADDRESS" --argjson amt "$TIMELOCK_AMOUNT" \
-  '{($ta): ($amt|tonumber)}')
+TIMELOCK_OUTPUTS=$(jq -n --arg addr "$TIMELOCK_ADDRESS" --argjson amt "$TIMELOCK_BTC" '{($addr): ($amt|tonumber)}')
 check_cmd "Timelock output creation" "TIMELOCK_OUTPUTS" "$TIMELOCK_OUTPUTS"
 
 # STUDENT TASK: Create the raw transaction with timelock
